@@ -1088,6 +1088,7 @@ const nav_msgs::msg::Odometry MessageWrapper::createRosOdoMessage(const sbg_driv
   // The pose message provides the position and orientation of the robot relative to the frame specified in header.frame_id
   odo_ros_msg.header = createRosHeader(ref_sbg_imu_msg.time_stamp);
   odo_ros_msg.header.frame_id = m_odom_frame_id_;
+  //The orientation is already transformed in ENU if needed
   tf2::convert(ref_orientation, odo_ros_msg.pose.pose.orientation);
 
   // Convert latitude and longitude to UTM coordinates.
@@ -1099,8 +1100,16 @@ const nav_msgs::msg::Odometry MessageWrapper::createRosOdoMessage(const sbg_driv
     {
       // Publish UTM initial transformation.
       geometry_msgs::msg::Pose pose;
-      pose.position.x = m_utm0_.easting;
-      pose.position.y = m_utm0_.northing;
+      if (m_use_enu_)
+      {
+        pose.position.x = m_utm0_.easting;
+        pose.position.y = m_utm0_.northing;
+      }
+      else 
+      {
+        pose.position.x = m_utm0_.northing;
+        pose.position.y = m_utm0_.easting;
+      }
       pose.position.z = m_utm0_.altitude;
       pose.orientation.x = 0;
       pose.orientation.y = 0;
@@ -1112,17 +1121,28 @@ const nav_msgs::msg::Odometry MessageWrapper::createRosOdoMessage(const sbg_driv
   }
 
   LLtoUTM(ref_ekf_nav_msg.latitude, ref_ekf_nav_msg.longitude, m_utm0_.zone, utm_northing, utm_easting);
-  odo_ros_msg.pose.pose.position.x = utm_northing - m_utm0_.northing;
-  odo_ros_msg.pose.pose.position.y = utm_easting  - m_utm0_.easting;
-  odo_ros_msg.pose.pose.position.z = ref_ekf_nav_msg.altitude - m_utm0_.altitude;
+  
+  if (m_use_enu_)
+  {
+    odo_ros_msg.pose.pose.position.x = utm_easting  - m_utm0_.easting;
+    odo_ros_msg.pose.pose.position.y = utm_northing - m_utm0_.northing;
+    odo_ros_msg.pose.pose.position.z = ref_ekf_nav_msg.altitude - m_utm0_.altitude;
+  }
+  else
+  {
+    odo_ros_msg.pose.pose.position.x = utm_northing - m_utm0_.northing;
+    odo_ros_msg.pose.pose.position.y = utm_easting  - m_utm0_.easting;
+    odo_ros_msg.pose.pose.position.z = m_utm0_.altitude - ref_ekf_nav_msg.altitude;
 
+  }
   // Compute convergence angle.
   double longitudeRad      = sbgDegToRadD(ref_ekf_nav_msg.longitude);
   double latitudeRad       = sbgDegToRadD(ref_ekf_nav_msg.latitude);
   double central_meridian  = sbgDegToRadD(computeMeridian(m_utm0_.zone));
   double convergence_angle = atan(tan(longitudeRad - central_meridian) * sin(latitudeRad));
 
-  // Convert position standard deviations to UTM frame.
+  // Convert position standard deviations to UTM frame. 
+  //(There may be an issue in x and y with ENU/NED here?)
   double std_east  = ref_ekf_nav_msg.position_accuracy.x;
   double std_north = ref_ekf_nav_msg.position_accuracy.y;
   double std_x = std_north * cos(convergence_angle) - std_east * sin(convergence_angle);
